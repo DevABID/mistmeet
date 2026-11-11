@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Hand, Info, MessageSquare, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Smile, Users, Video, VideoOff,
+  Hand, Info, MessageSquare, Mic, MicOff, MonitorOff, MonitorUp, PhoneOff, Presentation, Smile, Users, Video, VideoOff,
 } from "lucide-react";
+import Whiteboard from "./Whiteboard.jsx";
 import VideoTile from "./VideoTile.jsx";
 import SidePanel from "./SidePanel.jsx";
 import { useClock } from "../hooks/useClock.js";
@@ -102,7 +103,14 @@ export default function MeetingRoom({ meeting, info }) {
     <div className="room">
       <div className={`room-body ${panel ? "has-panel" : ""}`}>
         <div className="stage">
-          {spotlight ? (
+          {meeting.wbOpen ? (
+            <div className="spotlight-layout board-layout">
+              <div className="spotlight-main">
+                <Whiteboard meeting={meeting} info={info} onClose={() => meeting.setWhiteboardOpen(false)} />
+              </div>
+              <div className="spotlight-strip">{tiles.map((t) => renderTile(t, true))}</div>
+            </div>
+          ) : spotlight ? (
             <div className="spotlight-layout">
               <div className="spotlight-main">{renderTile(spotlight)}</div>
               {others.length > 0 && <div className="spotlight-strip">{others.map((t) => renderTile(t, true))}</div>}
@@ -187,6 +195,15 @@ export default function MeetingRoom({ meeting, info }) {
           >
             {sharing ? <MonitorOff size={22} /> : <MonitorUp size={22} />}
           </CtrlButton>
+          <CtrlButton
+            on
+            active={meeting.wbOpen}
+            onClick={() => meeting.setWhiteboardOpen(!meeting.wbOpen)}
+            label={meeting.wbOpen ? "Close whiteboard" : "Open whiteboard"}
+            dot={meeting.wbUnseen && !meeting.wbOpen}
+          >
+            <Presentation size={22} />
+          </CtrlButton>
           <div className="menu-anchor">
             <CtrlButton on active={emojiOpen} onClick={() => setEmojiOpen((o) => !o)} label="Send a reaction">
               <Smile size={22} />
@@ -234,7 +251,7 @@ export default function MeetingRoom({ meeting, info }) {
   );
 }
 
-function CtrlButton({ on, active, onClick, label, children, disabled, hideMobile }) {
+function CtrlButton({ on, active, onClick, label, children, disabled, hideMobile, dot }) {
   return (
     <button
       className={`ctrl-btn ${on ? "" : "is-off"} ${active ? "is-active" : ""} ${hideMobile ? "hide-mobile" : ""}`}
@@ -244,6 +261,7 @@ function CtrlButton({ on, active, onClick, label, children, disabled, hideMobile
       disabled={disabled}
     >
       {children}
+      {dot && <span className="ctrl-dot" />}
     </button>
   );
 }

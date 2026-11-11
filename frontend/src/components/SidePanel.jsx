@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { ClipboardList, Hand, Mic, MicOff, Send, UserX, X } from "lucide-react";
+import { ClipboardList, Download, FileText, Hand, Mic, MicOff, Paperclip, Send, Upload, UserX, X } from "lucide-react";
 import Avatar from "./Avatar.jsx";
 import { CopyButton } from "../pages/Home.jsx";
-import { meetingLink } from "../api.js";
+import { chatFileUrl, meetingLink } from "../api.js";
 
 const TITLES = { people: "People", chat: "In-call messages", info: "Meeting details" };
 
@@ -105,27 +105,171 @@ function PeoplePanel({ meeting, peerList }) {
   );
 }
 
+function formatBytes(n = 0) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+const URL_RE = /(https?:\/\/[^\s]+)/g;
+function Linkified({ text }) {
+  return text.split(URL_RE).map((part, i) =>
+    /^https?:\/\//.test(part) ? (
+      <a key={i} href={part} target="_blank" rel="noopener noreferrer">{part}</a>
+    ) : (
+      part
+    )
+  );
+}
+
+function Attachment({ file }) {
+  const view = chatFileUrl(file.url);
+  const download = chatFileUrl(file.url, true);
+  if (file.is_image) {
+    return (
+      <div className="chat-image">
+        <a href={view} target="_blank" rel="noopener noreferrer" title="Open full size">
+          <img src={view} alt={file.name} loading="lazy" />
+        </a>
+        <div className="chat-image-meta">
+          <span>{file.name}</span>
+          <a href={download} aria-label={`Download ${file.name}`} title="Download"><Download size={15} /></a>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <a className="chat-file" href={download} title={`Download ${file.name}`}>
+      <span className="chat-file-icon"><FileText size={20} /></span>
+      <span className="chat-file-text">
+        <strong>{file.name}</strong>
+        <span className="muted small">{formatBytes(file.size)}</span>
+      </span>
+      <Download size={18} />
+    </a>
+  );
+}
+
+let pendingSeq = 0;
+
 function ChatPanel({ meeting }) {
-  const { messages, selfId } = meeting;
+  const { messages, selfId, fileLimitMb } = meeting;
   const [text, setText] = useState("");
+  const [pending, setPending] = useState([]); // {id, file, preview, status, progress, error}
+  const [dragging, setDragging] = useState(false);
   const endRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const dragDepth = useRef(0);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
   }, [messages.length]);
 
-  const submit = (e) => {
-    e.preventDefault();
-    if (!text.trim()) return;
-    meeting.sendChat(text.trim());
-    setText("");
+  // Free image previews when the panel closes.
+  const pendingRef = useRef(pending);
+  pendingRef.current = pending;
+  useEffect(() => () => pendingRef.current.forEach((p) => p.preview && URL.revokeObjectURL(p.preview)), []);
+
+  const update = (id, changes) => setPending((list) => list.map((p) => (p.id === id ? { ...p, ...changes } : p)));
+  const remove = (id) =>
+    setPending((list) => {
+      const item = list.find((p) => p.id === id);
+      if (item?.preview) URL.revokeObjectURL(item.preview);
+      return list.filter((p) => p.id !== id);
+    });
+
+  function addFiles(fileList) {
+    const limit = fileLimitMb * 1024 * 1024;
+    const items = [...fileList].map((original) => {
+      let file = original;
+      // Pasted screenshots all arrive as "image.png"; give them a useful name.
+      if (/^image\.(png|jpe?g|gif|webp)$/i.test(file.name) || !file.name) {
+        const ext = (file.type.split("/")[1] || "png").replace("jpeg", "jpg");
+        const stamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }).replace(/:/g, ".");
+        file = new File([file], `Pasted image ${stamp}.${ext}`, { type: file.type });
+      }
+      const tooBig = file.size > limit;
+      return {
+        id: ++pendingSeq,
+        file,
+        preview: file.type.startsWith("image/") && !tooBig ? URL.createObjectURL(file) : null,
+        status: tooBig ? "error" : "ready",
+        progress: 0,
+        error: tooBig ? `Larger than ${fileLimitMb} MB` : "",
+      };
+    });
+    setPending((list) => [...list, ...items].slice(0, 10));
+  }
+
+  const onPaste = (e) => {
+    const files = e.clipboardData?.files;
+    if (files && files.length) {
+      e.preventDefault();
+      addFiles(files);
+    }
   };
 
+  const onDragEnter = (e) => {
+    if (![...(e.dataTransfer?.types || [])].includes("Files")) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    setDragging(true);
+  };
+  const onDragLeave = () => {
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  };
+  const onDrop = (e) => {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
+  };
+
+  async function submit(e) {
+    e.preventDefault();
+    const body = text.trim();
+    const queue = pending.filter((p) => p.status === "ready");
+    if (!body && !queue.length) return;
+    setText("");
+
+    if (!queue.length) {
+      meeting.sendChat(body);
+      return;
+    }
+    let caption = body; // the message text travels with the first file
+    for (const item of queue) {
+      update(item.id, { status: "uploading", progress: 0, error: "" });
+      try {
+        await meeting.uploadChatFile(item.file, caption, (progress) => update(item.id, { progress }));
+        caption = "";
+        remove(item.id);
+      } catch (err) {
+        update(item.id, { status: "error", error: err.message, retryable: true });
+      }
+    }
+    if (caption) setText(caption);
+  }
+
+  const busy = pending.some((p) => p.status === "uploading");
+  const canSend = !busy && (text.trim() || pending.some((p) => p.status === "ready"));
+
   return (
-    <>
-      <p className="panel-note">Messages are visible to everyone in the call and are saved with this meeting.</p>
+    <div
+      className={`chat-panel ${dragging ? "is-dragging" : ""}`}
+      onPaste={onPaste}
+      onDragEnter={onDragEnter}
+      onDragOver={(e) => [...(e.dataTransfer?.types || [])].includes("Files") && e.preventDefault()}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      <p className="panel-note">
+        Messages and files are visible to everyone in the call and are saved with this meeting.
+      </p>
       <div className="panel-scroll chat-list">
-        {messages.length === 0 && <p className="muted empty">No messages yet. Share a link or a quick note with the group.</p>}
+        {messages.length === 0 && (
+          <p className="muted empty">No messages yet. Send a note, paste a screenshot, or drop a file here.</p>
+        )}
         {messages.map((m, i) => {
           const prev = messages[i - 1];
           const grouped = prev && prev.peer_id === m.peer_id && new Date(m.created_at) - new Date(prev.created_at) < 60000;
@@ -139,17 +283,80 @@ function ChatPanel({ meeting }) {
                   </span>
                 </div>
               )}
-              <p>{m.text}</p>
+              {m.text && <p><Linkified text={m.text} /></p>}
+              {m.file && <Attachment file={m.file} />}
             </div>
           );
         })}
         <div ref={endRef} />
       </div>
+
+      {pending.length > 0 && (
+        <ul className="pending-files" aria-label="Files to send">
+          {pending.map((p) => (
+            <li key={p.id} className={`pending-file ${p.status === "error" ? "has-error" : ""}`}>
+              {p.preview ? <img src={p.preview} alt="" /> : <span className="chat-file-icon"><FileText size={18} /></span>}
+              <span className="pending-text">
+                <span className="pending-name">{p.file.name}</span>
+                <span className="small">
+                  {p.status === "error" ? p.error : p.status === "uploading" ? `Sending… ${Math.round(p.progress * 100)}%` : formatBytes(p.file.size)}
+                </span>
+                {p.status === "uploading" && (
+                  <span className="pending-bar"><span style={{ width: `${Math.round(p.progress * 100)}%` }} /></span>
+                )}
+              </span>
+              {p.status === "error" && p.retryable && (
+                <button type="button" className="link-btn small" onClick={() => update(p.id, { status: "ready", error: "" })}>Retry</button>
+              )}
+              {p.status !== "uploading" && (
+                <button type="button" className="icon-btn-light" onClick={() => remove(p.id)} aria-label={`Remove ${p.file.name}`}>
+                  <X size={16} />
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
       <form className="chat-form" onSubmit={submit}>
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Send a message" maxLength={2000} aria-label="Message" />
-        <button className="icon-btn-light" disabled={!text.trim()} aria-label="Send message"><Send size={18} /></button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            addFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <button
+          type="button"
+          className="icon-btn-light"
+          onClick={() => fileInputRef.current?.click()}
+          aria-label={`Attach files (up to ${fileLimitMb} MB each)`}
+          title={`Attach files (up to ${fileLimitMb} MB each)`}
+        >
+          <Paperclip size={18} />
+        </button>
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={pending.length ? "Add a message (optional)" : "Send a message"}
+          maxLength={2000}
+          aria-label="Message"
+        />
+        <button className="icon-btn-light" disabled={!canSend} aria-label="Send">
+          <Send size={18} />
+        </button>
       </form>
-    </>
+
+      {dragging && (
+        <div className="drop-overlay" aria-hidden="true">
+          <Upload size={28} />
+          <span>Drop files to share with everyone</span>
+        </div>
+      )}
+    </div>
   );
 }
 

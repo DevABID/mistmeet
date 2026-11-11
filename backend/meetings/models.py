@@ -65,8 +65,36 @@ class ChatMessage(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     peer_id = models.CharField(max_length=32, blank=True)
     display_name = models.CharField(max_length=80)
-    text = models.TextField(max_length=2000)
+    text = models.TextField(max_length=2000, blank=True)
+    # Attachment details (the bytes live in ChatFile so listing messages stays fast)
+    file_name = models.CharField(max_length=255, blank=True)
+    file_type = models.CharField(max_length=100, blank=True)
+    file_size = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["created_at"]
+
+    @property
+    def has_file(self):
+        return self.file_size is not None
+
+
+class ChatFile(models.Model):
+    """
+    File contents stored in the database. Render's disk is wiped on every
+    deploy and whenever a free service sleeps, so files on disk would vanish.
+    For heavy use, switch to S3 / Cloudflare R2 with django-storages.
+    """
+
+    message = models.OneToOneField(ChatMessage, on_delete=models.CASCADE, related_name="file_data")
+    data = models.BinaryField()
+
+
+class Whiteboard(models.Model):
+    """One shared whiteboard per meeting. `state` holds pages and their items (see whiteboard.py)."""
+
+    meeting = models.OneToOneField(Meeting, on_delete=models.CASCADE, related_name="whiteboard")
+    state = models.JSONField(default=dict)
+    locked = models.BooleanField(default=False, help_text="When on, only the host can draw.")
+    updated_at = models.DateTimeField(auto_now=True)

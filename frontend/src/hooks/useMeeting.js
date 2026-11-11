@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, wsUrl } from "../api.js";
+import { api, uploadWithProgress, wsUrl } from "../api.js";
 import { getAudioContext } from "./useSpeaking.js";
 
 /*
@@ -53,6 +53,11 @@ export function useMeeting(code) {
   const [selected, setSelected] = useState({ audioinput: "", videoinput: "" });
   const [mediaError, setMediaError] = useState("");
   const [selfName, setSelfName] = useState("");
+  const [fileLimitMb, setFileLimitMb] = useState(10);
+  const [wbOpen, setWbOpen] = useState(false);
+  const [wbUnseen, setWbUnseen] = useState(false);
+  const wbOpenRef = useRef(false);
+  const wbListenersRef = useRef(new Set());
 
   // ---- refs (read inside async callbacks without stale closures)
   const wsRef = useRef(null);
@@ -86,6 +91,12 @@ export function useMeeting(code) {
   const setVideoOn = (v) => {
     videoOnRef.current = v;
     setVideoOnState(v);
+  };
+
+  const setWhiteboardOpen = (open) => {
+    wbOpenRef.current = open;
+    setWbOpen(open);
+    if (open) setWbUnseen(false);
   };
 
   const notify = (text) => {
@@ -366,6 +377,8 @@ export function useMeeting(code) {
     setPeers({});
     setJoinRequests([]);
     setHand(false);
+    setWhiteboardOpen(false);
+    setWbUnseen(false);
   }
 
   const mergeMessages = (incoming) =>
@@ -377,6 +390,17 @@ export function useMeeting(code) {
     });
 
   handlerRef.current = (msg) => {
+    // Whiteboard messages go to the open board (if any); the hook only tracks open/unseen.
+    if (typeof msg.type === "string" && msg.type.startsWith("wb-")) {
+      wbListenersRef.current.forEach((listener) => listener(msg));
+      if (msg.type === "wb-show") {
+        setWhiteboardOpen(true);
+        notify(`${msg.by} is showing the whiteboard`);
+      } else if (msg.type === "wb-op" && !wbOpenRef.current) {
+        setWbUnseen(true);
+      }
+      return;
+    }
     switch (msg.type) {
       case "error":
         setErrorReason(msg.reason);
@@ -396,6 +420,7 @@ export function useMeeting(code) {
         msg.peers.forEach((p) => (map[p.peer_id] = { ...p, stream: null }));
         setPeers(map);
         setJoinRequests(msg.waiting || []);
+        if (msg.limits?.file_mb) setFileLimitMb(msg.limits.file_mb);
         setStatus("joined");
         api(`/meetings/${code}/messages/`).then(mergeMessages).catch(() => {});
         msg.peers.forEach((p) => callPeer(p.peer_id).catch(() => {}));
@@ -429,6 +454,9 @@ export function useMeeting(code) {
         break;
       case "chat":
         mergeMessages([msg]);
+        if (msg.file && msg.peer_id !== selfIdRef.current) {
+          notify(`${msg.name} shared ${msg.file.is_image ? "an image" : "a file"}`);
+        }
         break;
       case "reaction": {
         const id = Math.random().toString(36).slice(2);
@@ -523,6 +551,24 @@ export function useMeeting(code) {
     toggleShare: () => (screenTrackRef.current ? stopShare() : startShare()),
     toggleHand,
     sendChat: (text) => send({ type: "chat", text }),
+    fileLimitMb,
+    wbOpen,
+    wbUnseen,
+    setWhiteboardOpen,
+    sendWhiteboard: (payload) => send(payload),
+    subscribeWhiteboard: (listener) => {
+      wbListenersRef.current.add(listener);
+      return () => wbListenersRef.current.delete(listener);
+    },
+    uploadChatFile: async (file, text, onProgress) => {
+      const form = new FormData();
+      form.append("file", file, file.name);
+      form.append("peer_id", selfIdRef.current || "");
+      if (text) form.append("text", text);
+      const message = await uploadWithProgress(`/meetings/${code}/messages/upload/`, form, onProgress);
+      mergeMessages([message]); // the WebSocket also delivers it; duplicates are ignored
+      return message;
+    },
     sendReaction: (emoji) => send({ type: "reaction", emoji }),
     admit: (peerId) => send({ type: "admit", peer_id: peerId }),
     deny: (peerId) => send({ type: "deny", peer_id: peerId }),

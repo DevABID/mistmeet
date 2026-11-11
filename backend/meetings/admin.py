@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ChatMessage, Meeting, Participant
+from .models import ChatMessage, Meeting, Participant, Whiteboard
 
 
 @admin.register(Meeting)
@@ -18,4 +18,9 @@ class ParticipantAdmin(admin.ModelAdmin):
 
 @admin.register(ChatMessage)
 class ChatMessageAdmin(admin.ModelAdmin):
-    list_display = ("display_name", "meeting", "created_at")
+    list_display = ("display_name", "meeting", "file_name", "created_at")
+
+
+@admin.register(Whiteboard)
+class WhiteboardAdmin(admin.ModelAdmin):
+    list_display = ("meeting", "locked", "updated_at")

@@ -16,12 +16,16 @@ import re
 import uuid
 
 from channels.db import database_sync_to_async
+from django.conf import settings
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from django.db import transaction
 from django.utils import timezone
 
 from accounts.serializers import display_name_for
 
-from .models import ChatMessage, Meeting, Participant
+from .chat import chat_payload
+from .models import ChatMessage, Meeting, Participant, Whiteboard
+from .whiteboard import apply_op, initial_state, sanitize_item, sanitize_op
 
 PEER_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 REACTIONS = {"💖", "👍", "🎉", "👏", "😂", "😮", "😢", "🤔", "👎"}
@@ -80,6 +84,11 @@ class MeetingConsumer(AsyncJsonWebsocketConsumer):
             "host-mute": self.handle_host_mute,
             "host-remove": self.handle_host_remove,
             "end-meeting": self.handle_end_meeting,
+            "wb-sync": self.handle_wb_sync,
+            "wb-op": self.handle_wb_op,
+            "wb-draft": self.handle_wb_draft,
+            "wb-lock": self.handle_wb_lock,
+            "wb-show": self.handle_wb_show,
         }
         kind = content.get("type")
         handler = handlers.get(kind)
@@ -125,16 +134,7 @@ class MeetingConsumer(AsyncJsonWebsocketConsumer):
         if not text:
             return
         message = await self.save_message(text)
-        await self.broadcast(
-            {
-                "type": "chat",
-                "id": message.id,
-                "peer_id": self.peer_id,
-                "name": self.display_name,
-                "text": text,
-                "created_at": message.created_at.isoformat(),
-            }
-        )
+        await self.broadcast(chat_payload(message, self.code))
 
     async def handle_reaction(self, content):
         emoji = content.get("emoji")
@@ -169,6 +169,42 @@ class MeetingConsumer(AsyncJsonWebsocketConsumer):
         await self.channel_layer.group_send(self.room_group, {"type": "meeting_ended"})
         for peer_id in waiting:
             await self.channel_layer.group_send(f"peer_{peer_id}", {"type": "meeting_ended"})
+
+    # ------------------------------------------------------------------ whiteboard
+
+    async def handle_wb_sync(self, content):
+        await self.send_json({"type": "wb-state", **(await self.wb_snapshot())})
+
+    async def handle_wb_op(self, content):
+        op = sanitize_op(content.get("op"))
+        if op is None:
+            return
+        error = await self.wb_apply(op)
+        if error:
+            # Tell the sender why, and resend the true board so their view stays correct.
+            await self.send_json({"type": "wb-error", "message": error})
+            await self.send_json({"type": "wb-state", **(await self.wb_snapshot())})
+            return
+        await self.broadcast({"type": "wb-op", "op": op, "by": self.peer_id}, exclude_self=True)
+
+    async def handle_wb_draft(self, content):
+        # Live preview of a stroke while it's being drawn. Not saved.
+        item = sanitize_item(content.get("item"))
+        page = content.get("page")
+        if item is None or not isinstance(page, str) or len(page) > 40:
+            return
+        await self.broadcast({"type": "wb-draft", "page": page, "item": item, "by": self.peer_id}, exclude_self=True)
+
+    async def handle_wb_lock(self, content):
+        if not self.is_host:
+            return
+        locked = bool(content.get("locked"))
+        await self.wb_set_locked(locked)
+        await self.broadcast({"type": "wb-lock", "locked": locked})
+
+    async def handle_wb_show(self, content):
+        if self.is_host:
+            await self.broadcast({"type": "wb-show", "by": self.display_name}, exclude_self=True)
 
     # ------------------------------------------------------------------ channel-layer events
 
@@ -212,6 +248,7 @@ class MeetingConsumer(AsyncJsonWebsocketConsumer):
                 "peers": peers,
                 "waiting": waiting if self.is_host else [],
                 "meeting": {"code": self.code, "title": self.meeting.title},
+                "limits": {"file_mb": settings.CHAT_FILE_MAX_MB},
             }
         )
         await self.broadcast({"type": "peer-joined", "peer": me}, exclude_self=True)
@@ -306,6 +343,38 @@ class MeetingConsumer(AsyncJsonWebsocketConsumer):
         return ChatMessage.objects.create(
             meeting=self.meeting, user=self.user, peer_id=self.peer_id, display_name=self.display_name, text=text
         )
+
+    @database_sync_to_async
+    def wb_snapshot(self):
+        board, _ = Whiteboard.objects.get_or_create(meeting=self.meeting)
+        is_new = not isinstance(board.state, dict) or not board.state.get("pages")
+        state = initial_state(board.state)
+        if is_new:
+            board.state = state
+            board.save(update_fields=["state", "updated_at"])
+        return {"pages": state["pages"], "current": state["current"], "locked": board.locked}
+
+    @database_sync_to_async
+    def wb_apply(self, op):
+        with transaction.atomic():
+            board, _ = Whiteboard.objects.select_for_update().get_or_create(meeting=self.meeting)
+            if board.locked and not self.is_host:
+                return "The host has locked the whiteboard. Only the host can draw right now."
+            if op["op"] == "clear" and not self.is_host:
+                return "Only the host can clear a page."
+            state = initial_state(board.state)
+            error = apply_op(state, op)
+            if error:
+                return error
+            board.state = state
+            board.save(update_fields=["state", "updated_at"])
+        return None
+
+    @database_sync_to_async
+    def wb_set_locked(self, locked):
+        board, _ = Whiteboard.objects.get_or_create(meeting=self.meeting)
+        board.locked = locked
+        board.save(update_fields=["locked", "updated_at"])
 
     @database_sync_to_async
     def end_meeting(self):

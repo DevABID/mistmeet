@@ -27,7 +27,7 @@ export default function AuthPage({ mode }) {
         if (!cancelled) setServer("ok");
       } catch (e) {
         if (cancelled) return;
-        if (e.notApi && attempt < 6) {
+        if (e.notApi && !e.misconfigured && attempt < 6) {
           setServer("waking");
           setTimeout(() => ping(attempt + 1), 10000);
         } else {

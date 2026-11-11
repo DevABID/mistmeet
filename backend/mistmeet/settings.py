@@ -122,6 +122,10 @@ if REDIS_URL:
 else:
     CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
 
+# Largest file people can share in the in-call chat. Files are stored in the
+# database, so keep this modest on small/free databases.
+CHAT_FILE_MAX_MB = int(os.environ.get("CHAT_FILE_MAX_MB", "10"))
+
 # WebRTC ICE servers. STUN works on most home networks; add a TURN server
 # (e.g. coturn) so calls connect across strict corporate / campus firewalls.
 ICE_SERVERS = [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}]

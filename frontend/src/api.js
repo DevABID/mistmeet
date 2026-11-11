@@ -36,6 +36,17 @@ export async function api(path, { method = "GET", body } = {}) {
   const data = isJson ? await res.json().catch(() => ({})) : null;
 
   if (!isJson) {
+    const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+    if (!API_ORIGIN && !isLocal) {
+      // Deployed frontend built without VITE_API_ORIGIN: it's calling itself, not the API.
+      throw Object.assign(
+        new Error(
+          "This site isn't connected to the MIST Meet server. VITE_API_ORIGIN wasn't set when the site was built. " +
+            "Set it to your API's address and redeploy the site."
+        ),
+        { status: res.status, notApi: true, misconfigured: true }
+      );
+    }
     const error = new Error(
       res.status >= 500 || res.status === 0
         ? `The server had a problem (${res.status}). If you deployed recently, check the API service's Logs on Render.`
@@ -69,6 +80,34 @@ export async function downloadFromSignedLink(linkPath) {
   document.body.appendChild(a);
   a.click();
   a.remove();
+}
+
+/** Upload with progress (fetch can't report upload progress, XHR can). */
+export function uploadWithProgress(path, formData, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_ORIGIN}/api${path}`);
+    const token = getToken();
+    if (token) xhr.setRequestHeader("Authorization", `Token ${token}`);
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
+    xhr.onload = () => {
+      let data = null;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        /* not JSON */
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && data) resolve(data);
+      else reject(new Error(data?.detail || `Upload failed (${xhr.status || "network error"})`));
+    };
+    xhr.onerror = () => reject(new Error("Upload failed. Check your connection and try again."));
+    xhr.send(formData);
+  });
+}
+
+/** Full URL for a shared chat file. `download` forces a download instead of showing it. */
+export function chatFileUrl(path, download = false) {
+  return `${API_ORIGIN}${path}${download ? "&download=1" : ""}`;
 }
 
 export function wsUrl(code) {

@@ -17,7 +17,14 @@ Audio and video travel peer-to-peer over **WebRTC**; Django handles accounts, me
 - Screen sharing ("Present now")
 - Active-speaker highlight
 - Raise hand, emoji reactions
-- In-call chat, saved with the meeting
+- In-call chat, saved with the meeting, with clickable links
+- **File sharing in chat** for everyone in the call: attach files (📎), paste images or screenshots (Ctrl/⌘+V),
+  or drag and drop onto the chat. Images show as previews; other files as download cards. Upload progress, retry on failure,
+  up to 10 files at once. Program files (.exe, .bat, .js, …) are blocked
+- **Shared whiteboard**: pen, highlighter, line, arrow, rectangle, ellipse, text, LaTeX equations, eraser,
+  6 colours, 3 sizes, grid paper, undo/redo, multiple pages, live drawing for everyone, works with mouse, touch and stylus.
+  Download a page as PNG or all pages as PDF. Host can open it for everyone, lock it so only they can draw, and clear pages.
+  The board is saved with the meeting, so late joiners and reloads see everything
 - People panel with host controls: mute a participant, remove a participant
 - Host can "End call for everyone"
 - **Attendance reports (host only)**: every participant's name, email, first join, last leave, total time in the meeting,
@@ -77,6 +84,30 @@ start a meeting with the first and paste the link into the second.
 > Browsers only allow camera/microphone on `https://` or `localhost`. To test from a phone or another computer
 > on your network, serve over HTTPS (for example with `ngrok http 5173`, or a self-signed certificate) and add the host to `DJANGO_ALLOWED_HOSTS`.
 
+## Chat file sharing
+
+Files are stored in the database (table `meetings_chatfile`), because Render's disk is wiped on every deploy and whenever a
+free service sleeps. Each file gets an unguessable signed link, so images display inline and downloads work in any browser
+or download manager. Only PNG, JPEG, GIF and WebP open in the browser; every other type is always downloaded, so a shared
+file can never run scripts on your site.
+
+The free Render database holds 1 GB, so keep `CHAT_FILE_MAX_MB` modest. For heavy use, move file storage to S3 or
+Cloudflare R2 with `django-storages`.
+
+## Whiteboard
+
+Open it with the whiteboard button in the call's control bar. The board uses a fixed 16:9 space (1600 × 900), so it looks
+the same on phones, laptops and in exports.
+
+- **Equations**: choose the Σ tool, click where it should go, type LaTeX (or tap a shortcut like fraction, integral or
+  matrix), check the preview, then Insert. Rendering uses MathJax, loaded on demand from the jsDelivr CDN.
+- **Undo/redo** (Ctrl/⌘+Z, Ctrl/⌘+Shift+Z) apply to your own changes.
+- **Host menu (⋯)**: Open for everyone, Only I can draw / Let everyone draw, Clear this page.
+- **Pages** are shared: moving to another page moves everyone, like a teacher turning the page.
+- **Export**: PNG of the current page, or a PDF of every page (jsPDF, loaded on demand from jsDelivr).
+
+Limits: 60 pages per board and 4,000 items per page. The board is stored in the `meetings_whiteboard` table.
+
 ## Attendance reports
 
 Hosts can open a report from:
@@ -114,6 +145,7 @@ call. Rejoins and multiple devices are merged so overlapping time is counted onc
 | `TURN_URL`, `TURN_USERNAME`, `TURN_CREDENTIAL` | TURN server for strict networks | none (STUN only) |
 | `VITE_API_ORIGIN` (frontend) | API host if different from the frontend host | same origin |
 | `DATABASE_URL` | PostgreSQL connection string | local SQLite |
+| `CHAT_FILE_MAX_MB` | Largest file allowed in chat | `10` |
 
 ## Deploy: GitHub + Render
 

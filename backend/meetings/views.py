@@ -1,21 +1,30 @@
+import mimetypes
+import os
 from urllib.parse import urlencode
+
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
 from django.conf import settings
 from django.core import signing
 from django.db.models import F, Max
+from django.db import transaction
 from django.http import HttpResponse
+from django.utils.http import content_disposition_header
 from django.utils.text import slugify
 from django.shortcuts import get_object_or_404
 from rest_framework import generics
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .attendance import build_report, serialize
-from .models import Meeting, Participant
+from .chat import BLOCKED_EXTENSIONS, FILE_LINK_SALT, INLINE_IMAGE_TYPES, chat_payload
+from .models import ChatFile, ChatMessage, Meeting, Participant
 from .pdf import render_attendance_pdf
-from .serializers import ChatMessageSerializer, MeetingSerializer
+from .serializers import MeetingSerializer
 
 
 class MeetingListCreateView(generics.ListCreateAPIView):
@@ -50,21 +59,99 @@ class MeetingDetailView(generics.RetrieveDestroyAPIView):
         instance.delete()
 
 
-class MeetingMessagesView(generics.ListAPIView):
-    """Chat history, visible to the host and to anyone admitted to the call."""
+class MeetingMessagesView(APIView):
+    """Chat history, visible to the host and to anyone who was admitted to the call."""
 
-    serializer_class = ChatMessageSerializer
-    pagination_class = None
-
-    def get_queryset(self):
-        meeting = get_object_or_404(Meeting, code=self.kwargs["code"])
-        user = self.request.user
+    def get(self, request, code):
+        meeting = get_object_or_404(Meeting, code=code)
+        user = request.user
         allowed = meeting.host_id == user.id or meeting.participants.filter(
             user=user, admitted_at__isnull=False
         ).exists()
         if not allowed:
             raise PermissionDenied("Join the meeting to see its messages.")
-        return meeting.messages.all()
+        return Response([chat_payload(m, meeting.code) for m in meeting.messages.all()])
+
+
+class ChatUploadView(APIView):
+    """Send a file (optionally with a caption) to everyone in the call."""
+
+    parser_classes = [MultiPartParser]
+
+    def post(self, request, code):
+        meeting = get_object_or_404(Meeting, code=code, is_active=True)
+        participant = Participant.objects.filter(
+            meeting=meeting,
+            user=request.user,
+            peer_id=str(request.data.get("peer_id", "")),
+            status=Participant.Status.ADMITTED,
+        ).first()
+        if participant is None:
+            raise PermissionDenied("Join the call to share files.")
+
+        upload = request.FILES.get("file")
+        if upload is None:
+            raise ValidationError({"detail": "Choose a file to send."})
+        limit_mb = settings.CHAT_FILE_MAX_MB
+        if upload.size > limit_mb * 1024 * 1024:
+            raise ValidationError({"detail": f"Files can be up to {limit_mb} MB."})
+
+        name = os.path.basename(upload.name or "").strip()[:255] or "file"
+        if os.path.splitext(name)[1].lower() in BLOCKED_EXTENSIONS:
+            raise ValidationError({"detail": "Program files (like .exe, .bat or .js) can't be shared. Zip it first if you need to send it."})
+        content_type = (upload.content_type or mimetypes.guess_type(name)[0] or "application/octet-stream")[:100]
+        text = str(request.data.get("text") or "").strip()[:2000]
+
+        with transaction.atomic():
+            message = ChatMessage.objects.create(
+                meeting=meeting,
+                user=request.user,
+                peer_id=participant.peer_id,
+                display_name=participant.display_name,
+                text=text,
+                file_name=name,
+                file_type=content_type,
+                file_size=upload.size,
+            )
+            ChatFile.objects.create(message=message, data=upload.read())
+
+        payload = chat_payload(message, meeting.code)
+        async_to_sync(get_channel_layer().group_send)(
+            f"room_{meeting.code}", {"type": "relay", "payload": payload}
+        )
+        return Response(payload, status=201)
+
+
+class ChatFileView(APIView):
+    """Serves a shared file. Authorised by the signed `t` link, so <img> tags and downloads work."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request, code, message_id):
+        try:
+            signed_id = signing.loads(request.query_params.get("t", ""), salt=FILE_LINK_SALT)
+        except signing.BadSignature:
+            return HttpResponse("This file link isn't valid.", status=403, content_type="text/plain")
+        if signed_id != message_id:
+            return HttpResponse("This file link isn't valid.", status=403, content_type="text/plain")
+
+        message = get_object_or_404(ChatMessage, id=message_id, meeting__code=code, file_size__isnull=False)
+        blob = ChatFile.objects.filter(message=message).values_list("data", flat=True).first()
+        if blob is None:
+            return HttpResponse("This file is no longer available.", status=404, content_type="text/plain")
+        data = bytes(blob)
+
+        inline = message.file_type in INLINE_IMAGE_TYPES and request.query_params.get("download") != "1"
+        response = HttpResponse(data, content_type=message.file_type or "application/octet-stream")
+        response["Content-Disposition"] = content_disposition_header(not inline, message.file_name)
+        response["Content-Length"] = str(len(data))
+        # Never let a shared file run scripts on this site.
+        response["X-Content-Type-Options"] = "nosniff"
+        response["Content-Security-Policy"] = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox"
+        response["Cross-Origin-Resource-Policy"] = "cross-origin"
+        response["Cache-Control"] = "private, max-age=86400"
+        return response
 
 
 class IceServersView(APIView):
