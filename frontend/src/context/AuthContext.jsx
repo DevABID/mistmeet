@@ -11,11 +11,14 @@ export function AuthProvider({ children }) {
     if (!getToken()) return;
     api("/auth/me/")
       .then(setUser)
-      .catch(() => setToken(null))
+      .catch((e) => {
+        if (e.status === 401 || e.status === 403) setToken(null);
+      })
       .finally(() => setLoading(false));
   }, []);
 
-  const finish = useCallback(({ token, user }) => {
+  const finish = useCallback(({ token, user } = {}) => {
+    if (!token || !user) throw new Error("Sign-in didn't complete. The server sent an unexpected reply.");
     setToken(token);
     setUser(user);
     return user;

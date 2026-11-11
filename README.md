@@ -158,6 +158,15 @@ Every `git push` to `main` redeploys automatically.
   set `DATABASE_URL` on the API service to its connection string instead.
 - Don't use SQLite on Render: the disk is wiped on every deploy and restart.
 
+## Troubleshooting
+
+| What you see | Cause and fix |
+|---|---|
+| Sign-in page says the server "didn't respond" or "is starting" | The frontend isn't reaching the API. On Render, open the **mist-meet** static site → Environment and check `VITE_API_ORIGIN` is the API's real URL (e.g. `https://mist-meet-api.onrender.com`, no trailing slash), then **Manual Deploy → Clear build cache & deploy**. If it's right, the free API is waking up; wait a minute. |
+| "Can't reach the MIST Meet server" | Usually CORS: on the **mist-meet-api** service, set `CORS_ALLOWED_ORIGINS` to the frontend's exact URL, e.g. `https://mist-meet.onrender.com`. |
+| "The server had a problem (500)" | Open **mist-meet-api → Logs**; the full error is printed there. |
+| Test it directly | Open `https://<your-api>.onrender.com/api/health/` in the browser. You should see `{"status": "ok"}`. |
+
 ## Production notes
 
 - **TURN server**: Peer-to-peer connections fail behind many campus, office and mobile networks without one. Run [coturn](https://github.com/coturn/coturn) and set the `TURN_*` variables.

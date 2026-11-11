@@ -31,9 +31,10 @@ class LoginView(APIView):
     def post(self, request):
         identifier = (request.data.get("username") or "").strip()
         password = request.data.get("password") or ""
-        if "@" in identifier:
-            match = User.objects.filter(email__iexact=identifier).first()
-            identifier = match.username if match else identifier
+        lookup = {"email__iexact": identifier} if "@" in identifier else {"username__iexact": identifier}
+        match = User.objects.filter(**lookup).first()
+        if match:
+            identifier = match.username
         user = authenticate(username=identifier, password=password)
         if user is None:
             return Response(

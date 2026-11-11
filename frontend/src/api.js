@@ -7,26 +7,50 @@ const API_ORIGIN = (import.meta.env.VITE_API_ORIGIN || "").replace(/\/+$/, "");
 export const getToken = () => localStorage.getItem(TOKEN_KEY);
 export const setToken = (t) => (t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY));
 
+export const API_BASE_LABEL = API_ORIGIN || "this site";
+
 export async function api(path, { method = "GET", body } = {}) {
   const headers = { "Content-Type": "application/json" };
   const token = getToken();
   if (token) headers.Authorization = `Token ${token}`;
 
-  const res = await fetch(`${API_ORIGIN}/api${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`${API_ORIGIN}/api${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw Object.assign(
+      new Error(`Can't reach the MIST Meet server at ${API_BASE_LABEL}. Check your connection and the server address.`),
+      { status: 0 }
+    );
+  }
   if (res.status === 204) return null;
-  const data = await res.json().catch(() => ({}));
+
+  // The API always answers with JSON. Anything else (an HTML page) means the
+  // request reached the wrong place: a missing VITE_API_ORIGIN, or a server
+  // that is still starting up.
+  const isJson = (res.headers.get("Content-Type") || "").includes("application/json");
+  const data = isJson ? await res.json().catch(() => ({})) : null;
+
+  if (!isJson) {
+    const error = new Error(
+      res.status >= 500 || res.status === 0
+        ? `The server had a problem (${res.status}). If you deployed recently, check the API service's Logs on Render.`
+        : `The MIST Meet server didn't respond at ${API_BASE_LABEL}. It may still be starting up. Wait a minute and try again.`
+    );
+    error.status = res.status;
+    error.notApi = true;
+    throw error;
+  }
   if (!res.ok) {
     const message =
       data.detail ||
       Object.values(data).flat().filter((v) => typeof v === "string").join(" ") ||
       `Request failed (${res.status})`;
-    const error = new Error(message);
-    error.status = res.status;
-    throw error;
+    throw Object.assign(new Error(message), { status: res.status });
   }
   return data;
 }

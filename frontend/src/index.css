@@ -544,3 +544,5 @@ input:focus, select:focus { border-color: var(--accent); outline: none; box-shad
 .panel-credit { margin-top: 28px; }
 .status-body { flex: 1; }
 @media (max-width: 640px) { .site-footer { padding: 16px; justify-content: center; text-align: center; } }
+
+.server-note { font-size: 14px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--text); }

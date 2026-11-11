@@ -133,3 +133,15 @@ if os.environ.get("TURN_URL"):
             "credential": os.environ.get("TURN_CREDENTIAL", ""),
         }
     )
+
+# Print errors (with tracebacks) to the console, so they show in Render's Logs tab
+# even when DEBUG is off.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "root": {"handlers": ["console"], "level": "WARNING"},
+    "loggers": {
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+    },
+}
