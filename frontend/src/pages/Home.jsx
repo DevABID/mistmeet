@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CalendarPlus, Check, ClipboardList, Copy, Keyboard, Link2, LogOut, Plus, Trash2, Video, X } from "lucide-react";
+import Footer from "../components/Footer.jsx";
 import Logo from "../components/Logo.jsx";
 import Avatar from "../components/Avatar.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -163,6 +164,8 @@ export default function Home() {
             ))}
         </section>
       </main>
+
+      <Footer />
 
       {modal?.type === "link" && <LinkModal meeting={modal.meeting} onClose={() => setModal(null)} />}
       {modal?.type === "schedule" && (

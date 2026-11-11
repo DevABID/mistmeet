@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Mic, MicOff, Video, VideoOff } from "lucide-react";
+import Footer from "./Footer.jsx";
 import Logo from "./Logo.jsx";
 import VideoTile from "./VideoTile.jsx";
 
@@ -75,6 +76,7 @@ export default function Lobby({ meeting, info, defaultName }) {
           )}
         </div>
       </main>
+      <Footer />
     </div>
   );
 }

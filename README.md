@@ -1,5 +1,7 @@
 # MIST Meet
 
+Developed by [Abidur Rahman](https://www.linkedin.com/in/abidurrahmanabid/).
+
 A browser-based video meeting app built with **React** (Vite) and **Django** (Django REST Framework + Channels).
 Audio and video travel peer-to-peer over **WebRTC**; Django handles accounts, meetings, chat history and real-time signaling.
 
@@ -88,7 +90,8 @@ API (host only, token auth):
 | Endpoint | Returns |
 |---|---|
 | `GET /api/meetings/<code>/attendance/` | JSON report |
-| `GET /api/meetings/<code>/attendance/pdf/?tz=Asia/Dhaka` | PDF file |
+| `GET /api/meetings/<code>/attendance/pdf-link/?tz=Asia/Dhaka` | `{ "url": ... }` a signed download link, valid 2 minutes |
+| `GET <that url>` | PDF file (plain browser download, works with or without download managers) |
 | `GET /api/meetings/?scope=past` | Your meetings that people attended |
 
 How time is counted: from when a person is admitted (not while waiting in the lobby) until they leave or the host ends the
@@ -110,6 +113,50 @@ call. Rejoins and multiple devices are merged so overlapping time is counted onc
 | `REDIS_URL` | Use Redis for Channels (required with more than one worker) | in-memory |
 | `TURN_URL`, `TURN_USERNAME`, `TURN_CREDENTIAL` | TURN server for strict networks | none (STUN only) |
 | `VITE_API_ORIGIN` (frontend) | API host if different from the frontend host | same origin |
+| `DATABASE_URL` | PostgreSQL connection string | local SQLite |
+
+## Deploy: GitHub + Render
+
+### 1. Push to GitHub
+
+Create an empty repository on GitHub (for example `mist-meet`), then from the `mist-meet` folder:
+
+```bash
+git init
+git add .
+git commit -m "MIST Meet"
+git branch -M main
+git remote add origin https://github.com/<your-username>/mist-meet.git
+git push -u origin main
+```
+
+`.gitignore` already keeps out `node_modules`, `venv`, `db.sqlite3` and `.env` files.
+
+### 2. Create everything on Render with the Blueprint
+
+1. In Render, click **New → Blueprint** and choose your GitHub repo. Render reads `render.yaml` and creates:
+   - `mist-meet-db` (PostgreSQL)
+   - `mist-meet-api` (Django + WebSockets, served by Daphne)
+   - `mist-meet` (the React site)
+2. Render asks for the values marked `sync: false`. Use the service names to fill them in:
+   - `CORS_ALLOWED_ORIGINS` = `https://mist-meet.onrender.com`
+   - `VITE_API_ORIGIN` = `https://mist-meet-api.onrender.com`
+   - TURN fields: leave empty for now.
+3. Click **Apply** and wait for all three to deploy.
+4. Open each service in the dashboard and check its real URL. If Render added a suffix (e.g. `mist-meet-api-x1y2.onrender.com`),
+   update the two variables to the real URLs, then **Manual Deploy** the frontend (it reads `VITE_API_ORIGIN` at build time)
+   and the API.
+5. Optional: create an admin user from the API service's **Shell** tab: `python manage.py createsuperuser`.
+
+Every `git push` to `main` redeploys automatically.
+
+### Render free plan: what to expect
+
+- The free API **sleeps after 15 minutes without traffic** and takes about a minute to wake up. The first visit after a quiet
+  period is slow; after that it's normal. Active calls keep it awake. A paid instance removes the sleep.
+- **Free PostgreSQL databases expire 30 days after creation.** For a permanent free database, create one on Neon or Supabase and
+  set `DATABASE_URL` on the API service to its connection string instead.
+- Don't use SQLite on Render: the disk is wiped on every deploy and restart.
 
 ## Production notes
 

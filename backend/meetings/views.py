@@ -1,10 +1,14 @@
+from urllib.parse import urlencode
+
 from django.conf import settings
+from django.core import signing
 from django.db.models import F, Max
 from django.http import HttpResponse
 from django.utils.text import slugify
 from django.shortcuts import get_object_or_404
 from rest_framework import generics
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -82,14 +86,49 @@ class AttendanceView(APIView):
         return Response(serialize(build_report(_hosted_meeting(request, code))))
 
 
-class AttendancePdfView(APIView):
-    """Attendance report as a downloadable PDF (host only). ?tz=Asia/Dhaka sets the time zone."""
+PDF_LINK_SALT = "mistmeet.attendance-pdf"
+PDF_LINK_MAX_AGE = 120  # seconds
+
+
+class AttendancePdfLinkView(APIView):
+    """
+    Returns a short-lived signed URL for the PDF (host only).
+
+    The browser then downloads the PDF with a normal link instead of a
+    JavaScript fetch + blob, so the browser's own downloader, download
+    managers like IDM, and mobile browsers all receive the same real file.
+    """
 
     def get(self, request, code):
         meeting = _hosted_meeting(request, code)
-        report = build_report(meeting)
-        pdf = render_attendance_pdf(report, request.query_params.get("tz", "UTC"))
+        token = signing.dumps({"m": meeting.code, "u": request.user.id}, salt=PDF_LINK_SALT)
+        query = urlencode({"t": token, "tz": request.query_params.get("tz", "UTC")})
+        return Response({"url": f"/api/meetings/{meeting.code}/attendance/pdf/?{query}"})
+
+
+class AttendancePdfView(APIView):
+    """The PDF itself. Authorised by the signed `t` parameter, not by a header."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request, code):
+        try:
+            data = signing.loads(request.query_params.get("t", ""), salt=PDF_LINK_SALT, max_age=PDF_LINK_MAX_AGE)
+        except signing.BadSignature:
+            return HttpResponse(
+                "This download link has expired. Go back to the attendance page and click Download PDF again.",
+                status=403,
+                content_type="text/plain; charset=utf-8",
+            )
+        meeting = get_object_or_404(Meeting.objects.select_related("host"), code=code)
+        if data.get("m") != meeting.code or data.get("u") != meeting.host_id:
+            return HttpResponse("You don't have access to this report.", status=403, content_type="text/plain")
+
+        pdf = render_attendance_pdf(build_report(meeting), request.query_params.get("tz", "UTC"))
         name = slugify(meeting.title) or meeting.code
         response = HttpResponse(pdf, content_type="application/pdf")
         response["Content-Disposition"] = f'attachment; filename="attendance-{name}.pdf"'
+        response["Content-Length"] = str(len(pdf))
+        response["Cache-Control"] = "no-store"
         return response

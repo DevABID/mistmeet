@@ -11,13 +11,13 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-ACCENT = colors.HexColor("#1D56B3")
-ACCENT_SOFT = colors.HexColor("#E4ECF8")
-TEXT = colors.HexColor("#13233A")
-MUTED = colors.HexColor("#5A6B80")
-LINE = colors.HexColor("#D8E0E9")
-ZEBRA = colors.HexColor("#F5F7FA")
-GREEN = colors.HexColor("#2C7A4B")
+ACCENT = colors.HexColor("#6B4226")
+ACCENT_SOFT = colors.HexColor("#F1E4D6")
+TEXT = colors.HexColor("#2B1D14")
+MUTED = colors.HexColor("#7A6455")
+LINE = colors.HexColor("#E6D8C9")
+ZEBRA = colors.HexColor("#FAF5EF")
+GREEN = colors.HexColor("#4F7A3A")
 
 BASE = ParagraphStyle("base", fontName="Helvetica", fontSize=9, leading=12, textColor=TEXT, alignment=TA_LEFT)
 SMALL = ParagraphStyle("small", parent=BASE, fontSize=8, leading=10, textColor=MUTED)
@@ -148,7 +148,7 @@ def render_attendance_pdf(report, tz_name="UTC"):
     for i, r in enumerate(rows, start=1):
         name = escape(r["name"])
         if r["username"] and r["username"] != r["name"]:
-            name += f"<br/><font size=7 color='#5A6B80'>@{escape(r['username'])}</font>"
+            name += f"<br/><font size=7 color='#7A6455'>@{escape(r['username'])}</font>"
         data.append(
             [
                 Paragraph(str(i), BASE),
@@ -157,7 +157,7 @@ def render_attendance_pdf(report, tz_name="UTC"):
                 Paragraph("Host" if r["is_host"] else "Guest", BASE),
                 Paragraph(dt(r["first_joined"]), BASE),
                 Paragraph(
-                    "<font color='#2C7A4B'>Still in call</font>" if r["in_call"] else dt(r["last_left"], with_date=False),
+                    "<font color='#4F7A3A'>Still in call</font>" if r["in_call"] else dt(r["last_left"], with_date=False),
                     BASE,
                 ),
                 Paragraph(format_duration(r["total_seconds"]), BASE),
@@ -219,7 +219,7 @@ def render_attendance_pdf(report, tz_name="UTC"):
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(MUTED)
-        canvas.drawString(doc_.leftMargin, 9 * mm, f"MIST Meet attendance report  |  {m['code']}")
+        canvas.drawString(doc_.leftMargin, 9 * mm, f"MIST Meet attendance report  |  {m['code']}  |  Developed by Abidur Rahman")
         canvas.drawRightString(page[0] - doc_.rightMargin, 9 * mm, f"Page {doc_.page}")
         canvas.restoreState()
 

@@ -178,6 +178,10 @@ function InfoPanel({ info, isHost }) {
           </a>
         </div>
       )}
+      <p className="panel-credit muted small">
+        MIST Meet, developed by{" "}
+        <a href="https://www.linkedin.com/in/abidurrahmanabid/" target="_blank" rel="noopener noreferrer">Abidur Rahman</a>
+      </p>
     </div>
   );
 }

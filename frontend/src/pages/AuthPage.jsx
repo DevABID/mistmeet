@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import Footer from "../components/Footer.jsx";
 import Logo from "../components/Logo.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 
@@ -78,6 +79,7 @@ export default function AuthPage({ mode }) {
           </Link>
         </p>
       </div>
+      <Footer />
     </div>
   );
 }

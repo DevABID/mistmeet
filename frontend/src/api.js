@@ -2,7 +2,7 @@ const TOKEN_KEY = "mist_meet_token";
 
 // In production, set VITE_API_ORIGIN (e.g. https://api.example.com) if the
 // API lives on a different host than the frontend. Empty = same origin.
-const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
+const API_ORIGIN = (import.meta.env.VITE_API_ORIGIN || "").replace(/\/+$/, "");
 
 export const getToken = () => localStorage.getItem(TOKEN_KEY);
 export const setToken = (t) => (t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY));
@@ -31,22 +31,20 @@ export async function api(path, { method = "GET", body } = {}) {
   return data;
 }
 
-/** Fetch an authenticated file (e.g. a PDF) and hand it to the browser as a download. */
-export async function downloadFile(path, fallbackName) {
-  const res = await fetch(`${API_ORIGIN}/api${path}`, {
-    headers: { Authorization: `Token ${getToken()}` },
-  });
-  if (!res.ok) throw new Error(`Download failed (${res.status})`);
-  const disposition = res.headers.get("Content-Disposition") || "";
-  const filename = disposition.match(/filename="([^"]+)"/)?.[1] || fallbackName;
-  const url = URL.createObjectURL(await res.blob());
+/**
+ * Start a real browser download from an API path that returns a short-lived
+ * signed URL ({ url }). Using a plain link (instead of fetch + blob) means the
+ * browser's downloader, download managers and mobile browsers all get the
+ * complete file.
+ */
+export async function downloadFromSignedLink(linkPath) {
+  const { url } = await api(linkPath);
   const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
+  a.href = `${API_ORIGIN}${url}`;
+  a.rel = "noopener";
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export function wsUrl(code) {

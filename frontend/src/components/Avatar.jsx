@@ -1,4 +1,4 @@
-const PALETTE = ["#1D56B3", "#2C7A7B", "#7A4FB0", "#B4543A", "#3F6E2E", "#A0335F", "#3B5B8C", "#8A6A1F"];
+const PALETTE = ["#6B4226", "#8A5A3B", "#4F7A3A", "#A0522D", "#5B6E7A", "#8C4A5E", "#7A6A2F", "#3E5F5A"];
 
 export function initials(name = "") {
   const parts = name.trim().split(/\s+/).filter(Boolean);

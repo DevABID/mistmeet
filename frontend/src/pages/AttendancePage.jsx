@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowUp, Download, RefreshCw, Search } from "lucide-react";
+import Footer from "../components/Footer.jsx";
 import Logo from "../components/Logo.jsx";
 import Avatar from "../components/Avatar.jsx";
-import { api, downloadFile } from "../api.js";
+import { api, downloadFromSignedLink } from "../api.js";
 
 export function formatDuration(seconds = 0) {
   const s = Math.floor(seconds);
@@ -86,7 +87,7 @@ export default function AttendancePage() {
     setDownloading(true);
     try {
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      await downloadFile(`/meetings/${code}/attendance/pdf/?tz=${encodeURIComponent(tz)}`, `attendance-${code}.pdf`);
+      await downloadFromSignedLink(`/meetings/${code}/attendance/pdf-link/?tz=${encodeURIComponent(tz)}`);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -232,6 +233,7 @@ export default function AttendancePage() {
           </>
         )}
       </main>
+      <Footer />
     </div>
   );
 }

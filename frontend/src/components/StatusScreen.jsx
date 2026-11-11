@@ -1,3 +1,4 @@
+import Footer from "./Footer.jsx";
 import Logo from "./Logo.jsx";
 
 export default function StatusScreen({ title, body, onRejoin, rejoinLabel = "Rejoin", onHome }) {
@@ -12,6 +13,7 @@ export default function StatusScreen({ title, body, onRejoin, rejoinLabel = "Rej
           {onHome && <button className="btn btn-primary" onClick={onHome}>Return to home screen</button>}
         </div>
       </div>
+      <Footer />
     </div>
   );
 }
