@@ -12,8 +12,10 @@ Groups used on the channel layer:
   peer_<id>     one connection, for direct messages
 """
 
+import logging
 import re
 import uuid
+from datetime import timedelta
 
 from channels.db import database_sync_to_async
 from django.conf import settings
@@ -26,6 +28,12 @@ from accounts.serializers import display_name_for
 from .chat import chat_payload
 from .models import ChatMessage, Meeting, Participant, Whiteboard
 from .whiteboard import apply_op, initial_state, sanitize_item, sanitize_op
+
+logger = logging.getLogger(__name__)
+
+# A connection that hasn't sent a heartbeat for this long is treated as gone.
+# Browsers send one every 20 seconds (background tabs may send less often).
+STALE_AFTER = timedelta(seconds=150)
 
 PEER_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 REACTIONS = {"💖", "👍", "🎉", "👏", "😂", "😮", "😢", "🤔", "👎"}
@@ -90,13 +98,23 @@ class MeetingConsumer(AsyncJsonWebsocketConsumer):
             "wb-lock": self.handle_wb_lock,
             "wb-show": self.handle_wb_show,
         }
+        handlers["ping"] = self.handle_ping
         kind = content.get("type")
         handler = handlers.get(kind)
         if handler is None or not hasattr(self, "peer_id"):
             return
-        if kind != "join" and not self.admitted:
+        if kind not in ("join", "ping") and not self.admitted:
             return
-        await handler(content)
+        try:
+            await handler(content)
+        except Exception:
+            # Never drop the call because one action failed: log it and tell the user.
+            logger.exception("Error handling %r message in meeting %s", kind, getattr(self, "code", "?"))
+            message = "Something went wrong on the server, so that action didn't go through. Try again."
+            if kind.startswith("wb-"):
+                await self.send_json({"type": "wb-error", "message": message})
+            else:
+                await self.send_json({"type": "server-error", "message": message})
 
     # ------------------------------------------------------------------ client messages
 
@@ -115,6 +133,24 @@ class MeetingConsumer(AsyncJsonWebsocketConsumer):
 
         await self.send_json({"type": "waiting"})
         await self.to_group(self.host_group, {"type": "join-request", "peer_id": self.peer_id, "name": name})
+
+    async def handle_ping(self, content):
+        if not self.participant_id:
+            return
+        await self.update_participant(last_seen=timezone.now())
+        now = timezone.now()
+        if now - getattr(self, "last_sweep", now - STALE_AFTER) >= timedelta(seconds=30):
+            self.last_sweep = now
+            await self.sweep_stale()
+
+    async def sweep_stale(self):
+        """Remove sessions whose browser stopped responding (closed laptop, crash, lost network)."""
+        gone = await self.close_stale_sessions()
+        for peer_id, previous in gone:
+            if previous == Participant.Status.ADMITTED:
+                await self.broadcast({"type": "peer-left", "peer_id": peer_id})
+            else:
+                await self.to_group(self.host_group, {"type": "join-request-cancelled", "peer_id": peer_id})
 
     async def handle_signal(self, content):
         target = str(content.get("to") or "")
@@ -235,6 +271,7 @@ class MeetingConsumer(AsyncJsonWebsocketConsumer):
     async def enter_room(self):
         self.admitted = True
         await self.update_participant(status=Participant.Status.ADMITTED, admitted_at=timezone.now())
+        await self.sweep_stale()
         await self.join_group(self.room_group)
         if self.is_host:
             await self.join_group(self.host_group)
@@ -288,6 +325,7 @@ class MeetingConsumer(AsyncJsonWebsocketConsumer):
             display_name=name,
             audio_on=audio,
             video_on=video,
+            last_seen=timezone.now(),
         )
         return participant.id, admitted_before
 
@@ -343,6 +381,32 @@ class MeetingConsumer(AsyncJsonWebsocketConsumer):
         return ChatMessage.objects.create(
             meeting=self.meeting, user=self.user, peer_id=self.peer_id, display_name=self.display_name, text=text
         )
+
+    @database_sync_to_async
+    def close_stale_sessions(self):
+        cutoff = timezone.now() - STALE_AFTER
+        stale = list(
+            Participant.objects.filter(
+                meeting=self.meeting,
+                status__in=[Participant.Status.ADMITTED, Participant.Status.WAITING],
+                last_seen__lt=cutoff,
+            ).exclude(peer_id=self.peer_id)
+        ) + list(
+            # Sessions from before heartbeats existed
+            Participant.objects.filter(
+                meeting=self.meeting,
+                status__in=[Participant.Status.ADMITTED, Participant.Status.WAITING],
+                last_seen__isnull=True,
+                joined_at__lt=cutoff,
+            ).exclude(peer_id=self.peer_id)
+        )
+        gone = []
+        for p in stale:
+            gone.append((p.peer_id, p.status))
+            p.status = Participant.Status.LEFT
+            p.left_at = p.last_seen or cutoff
+            p.save(update_fields=["status", "left_at"])
+        return gone
 
     @database_sync_to_async
     def wb_snapshot(self):

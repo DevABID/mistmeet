@@ -76,6 +76,7 @@ export function useMeeting(code) {
   const peersRef = useRef({});
   const mediaGenRef = useRef(0);
   const handlerRef = useRef(() => {});
+  const pingRef = useRef(0);
 
   peersRef.current = peers;
   selectedRef.current = selected;
@@ -368,6 +369,7 @@ export function useMeeting(code) {
   // =================================================================== room events
 
   function endSession(finalStatus) {
+    clearInterval(pingRef.current);
     setStatus(finalStatus);
     const ws = wsRef.current;
     wsRef.current = null;
@@ -477,6 +479,9 @@ export function useMeeting(code) {
           notify(`${msg.by} muted your microphone`);
         }
         break;
+      case "server-error":
+        notify(msg.message);
+        break;
       case "removed":
         endSession("removed");
         break;
@@ -504,8 +509,14 @@ export function useMeeting(code) {
     }
     const ws = new WebSocket(wsUrl(code));
     wsRef.current = ws;
-    ws.onopen = () =>
+    ws.onopen = () => {
       ws.send(JSON.stringify({ type: "join", name, audio: audioOnRef.current, video: videoOnRef.current }));
+      // Heartbeat: lets the server tell live connections from ones that vanished.
+      clearInterval(pingRef.current);
+      pingRef.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" }));
+      }, 20000);
+    };
     ws.onmessage = (e) => handlerRef.current(JSON.parse(e.data));
     ws.onclose = () => {
       if (wsRef.current !== ws) return; // closed on purpose
@@ -532,6 +543,7 @@ export function useMeeting(code) {
     navigator.mediaDevices?.addEventListener?.("devicechange", loadDevices);
     return () => {
       navigator.mediaDevices?.removeEventListener?.("devicechange", loadDevices);
+      clearInterval(pingRef.current);
       const ws = wsRef.current;
       wsRef.current = null;
       ws?.close();

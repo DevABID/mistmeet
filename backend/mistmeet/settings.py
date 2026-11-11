@@ -104,11 +104,13 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
 }
 
+# The API uses token headers, not cookies, so allowing any origin is safe:
+# another website can't read a user's token. Set CORS_ALLOWED_ORIGINS
+# (comma-separated) if you want to restrict it to your own frontend.
 CORS_ALLOWED_ORIGINS = [
-    o.strip().rstrip("/")
-    for o in os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
-    if o.strip()
+    o.strip().rstrip("/") for o in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()
 ]
+CORS_ALLOW_ALL_ORIGINS = not CORS_ALLOWED_ORIGINS
 
 # Channels: in-memory for local development, Redis for production / multiple workers.
 REDIS_URL = os.environ.get("REDIS_URL")

@@ -140,7 +140,7 @@ call. Rejoins and multiple devices are merged so overlapping time is counted onc
 | `DJANGO_SECRET_KEY` | Secret key | dev key (change it!) |
 | `DJANGO_DEBUG` | `1` or `0` | `1` |
 | `DJANGO_ALLOWED_HOSTS` | Comma-separated hosts | `localhost,127.0.0.1` |
-| `CORS_ALLOWED_ORIGINS` | Frontend origins when served from another host | Vite dev URLs |
+| `CORS_ALLOWED_ORIGINS` | Optional: restrict which sites may call the API | any origin (safe with token auth) |
 | `REDIS_URL` | Use Redis for Channels (required with more than one worker) | in-memory |
 | `TURN_URL`, `TURN_USERNAME`, `TURN_CREDENTIAL` | TURN server for strict networks | none (STUN only) |
 | `VITE_API_ORIGIN` (frontend) | API host if different from the frontend host | same origin |
@@ -170,9 +170,8 @@ git push -u origin main
    - `mist-meet-db` (PostgreSQL)
    - `mist-meet-api` (Django + WebSockets, served by Daphne)
    - `mist-meet` (the React site)
-2. Render asks for the values marked `sync: false`. Use the service names to fill them in:
-   - `CORS_ALLOWED_ORIGINS` = `https://mist-meet.onrender.com`
-   - `VITE_API_ORIGIN` = `https://mist-meet-api.onrender.com`
+2. Render asks for the values marked `sync: false`:
+   - `VITE_API_ORIGIN` = the API's URL, e.g. `https://mist-meet-api.onrender.com` (you can also set this later, see below)
    - TURN fields: leave empty for now.
 3. Click **Apply** and wait for all three to deploy.
 4. Open each service in the dashboard and check its real URL. If Render added a suffix (e.g. `mist-meet-api-x1y2.onrender.com`),
@@ -195,9 +194,12 @@ Every `git push` to `main` redeploys automatically.
 | What you see | Cause and fix |
 |---|---|
 | Sign-in page says the server "didn't respond" or "is starting" | The frontend isn't reaching the API. On Render, open the **mist-meet** static site → Environment and check `VITE_API_ORIGIN` is the API's real URL (e.g. `https://mist-meet-api.onrender.com`, no trailing slash), then **Manual Deploy → Clear build cache & deploy**. If it's right, the free API is waking up; wait a minute. |
-| "Can't reach the MIST Meet server" | Usually CORS: on the **mist-meet-api** service, set `CORS_ALLOWED_ORIGINS` to the frontend's exact URL, e.g. `https://mist-meet.onrender.com`. |
+| "Can't reach the MIST Meet server" | The API is down or the URL in `VITE_API_ORIGIN` is wrong. If you set `CORS_ALLOWED_ORIGINS`, it must exactly match the site's URL; remove it to allow any origin. |
 | "The server had a problem (500)" | Open **mist-meet-api → Logs**; the full error is printed there. |
-| Test it directly | Open `https://<your-api>.onrender.com/api/health/` in the browser. You should see `{"status": "ok"}`. |
+| Test it directly | Open `https://<your-api>.onrender.com/api/health/`. You should see `"database": "ready"` and empty `pending_migrations` and `missing_migration_files`. |
+| `pending_migrations` isn't empty | The Start Command must begin with `python manage.py migrate --noinput && `. Fix it in the API service's Settings and redeploy. |
+| `missing_migration_files` isn't empty | Some files under `backend/meetings/migrations/` didn't reach GitHub. Upload the whole folder again. |
+| Same person appears several times | Ghost sessions from dropped connections. They're now removed automatically within about 2½ minutes. |
 
 ## Production notes
 

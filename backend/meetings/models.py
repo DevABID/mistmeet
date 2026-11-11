@@ -52,6 +52,7 @@ class Participant(models.Model):
     joined_at = models.DateTimeField(auto_now_add=True, help_text="When the connection asked to join.")
     admitted_at = models.DateTimeField(null=True, blank=True, help_text="When they actually entered the call.")
     left_at = models.DateTimeField(null=True, blank=True)
+    last_seen = models.DateTimeField(null=True, blank=True, help_text="Last heartbeat from this connection.")
 
     class Meta:
         indexes = [models.Index(fields=["meeting", "status"])]
